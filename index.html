@@ -223,14 +223,14 @@ function renderCursorProducts(products, hasNextPage) {
 
   list.innerHTML = products.map(p => {
     const isNew = p.name.startsWith("INJECTED");
-    // No duplicate tracking needed — cursor pagination is correct by design
-    return \`
-      <div class="product-row \${isNew ? 'injected' : ''}">
-        <span class="cat">\${p.category}</span>
-        <span class="name">\${p.name} \${isNew ? '<span class="dup-badge" style="background:#dc3545;color:white">NEW</span>' : ''}</span>
-        <span class="price">$\${p.price.toFixed(2)}</span>
-        <span class="date">\${fmtDate(p.createdAt)}</span>
-      </div>\`;
+    const newBadge = isNew ? '<span class="dup-badge" style="background:#dc3545;color:white">NEW</span>' : '';
+    const rowClass = isNew ? 'product-row injected' : 'product-row';
+    return '<div class="' + rowClass + '">' +
+      '<span class="cat">' + p.category + '</span>' +
+      '<span class="name">' + p.name + ' ' + newBadge + '</span>' +
+      '<span class="price">$' + p.price.toFixed(2) + '</span>' +
+      '<span class="date">' + fmtDate(p.createdAt) + '</span>' +
+      '</div>';
   }).join("");
 
   document.getElementById("cursorPageInfo").textContent = `Page ${cursorPage}`;
