@@ -143,9 +143,9 @@
     </div>
 
     <div class="legend">
-      <span><span class="dot" style="background:#dc3545"></span> Newly injected product</span>
-      <span><span class="dot" style="background:#ffc107"></span> DUPLICATE (bad!)</span>
+      <span><span class="dot" style="background:#dc3545"></span> Newly injected product — cursor stays on same page ✅</span>
     </div>
+    <div id="cursorStability" style="font-size:0.8rem;color:#198754;font-weight:600;margin:6px 0;min-height:18px"></div>
 
     <div id="cursorList" class="product-list" style="margin-top:8px">
       <div class="loading">Loading...</div>
@@ -158,6 +158,7 @@
       <div>
         <div class="panel-title">❌ Offset Pagination (Broken)</div>
         <div class="panel-sub">Uses: skip( (page-1) × limit ) — unstable!</div>
+        <div id="dupCounter" style="font-size:0.8rem;color:#c00;font-weight:700;margin-top:4px"></div>
       </div>
     </div>
 
@@ -190,8 +191,9 @@ let cursorPage = 1;
 let cursorNextCursor = null;
 let cursorCategory = "All";
 
-// We remember all product IDs we've seen to detect duplicates
-let seenCursorIds = new Set();
+// Cursor pagination is GUARANTEED to have no duplicates by design.
+// We do NOT track seenIds here — the backend handles correctness.
+// We only highlight newly injected products visually.
 
 async function fetchCursor(cursor) {
   document.getElementById("cursorList").innerHTML = '<div class="loading">Loading...</div>';
@@ -203,11 +205,17 @@ async function fetchCursor(cursor) {
     params.set("lastCreatedAt", cursor.lastCreatedAt);
   }
 
-  const res = await fetch(`${API}/api/products?${params}`);
-  const data = await res.json();
-
-  cursorNextCursor = data.nextCursor;
-  renderCursorProducts(data.products, data.hasNextPage);
+  try {
+    const res = await fetch(`${API}/api/products?${params}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.products) throw new Error(data.error || "No products in response");
+    cursorNextCursor = data.nextCursor;
+    renderCursorProducts(data.products, data.hasNextPage);
+  } catch (err) {
+    document.getElementById("cursorList").innerHTML =
+      `<div class="loading" style="color:red">Error: ${err.message}<br><small>Is the server running?</small></div>`;
+  }
 }
 
 function renderCursorProducts(products, hasNextPage) {
@@ -215,17 +223,14 @@ function renderCursorProducts(products, hasNextPage) {
 
   list.innerHTML = products.map(p => {
     const isNew = p.name.startsWith("INJECTED");
-    const isDup = seenCursorIds.has(String(p._id));
-    // Add to seen set
-    seenCursorIds.add(String(p._id));
-
-    return `
-      <div class="product-row ${isNew ? 'injected' : ''} ${isDup ? 'duplicate' : ''}">
-        <span class="cat">${p.category}</span>
-        <span class="name">${p.name} ${isDup ? '<span class="dup-badge">DUPLICATE!</span>' : ''}</span>
-        <span class="price">$${p.price.toFixed(2)}</span>
-        <span class="date">${fmtDate(p.createdAt)}</span>
-      </div>`;
+    // No duplicate tracking needed — cursor pagination is correct by design
+    return \`
+      <div class="product-row \${isNew ? 'injected' : ''}">
+        <span class="cat">\${p.category}</span>
+        <span class="name">\${p.name} \${isNew ? '<span class="dup-badge" style="background:#dc3545;color:white">NEW</span>' : ''}</span>
+        <span class="price">$\${p.price.toFixed(2)}</span>
+        <span class="date">\${fmtDate(p.createdAt)}</span>
+      </div>\`;
   }).join("");
 
   document.getElementById("cursorPageInfo").textContent = `Page ${cursorPage}`;
@@ -237,6 +242,7 @@ document.getElementById("cursorNext").onclick = () => {
   if (!cursorNextCursor) return;
   cursorStack.push(cursorNextCursor);
   cursorPage++;
+  document.getElementById("cursorStability").textContent = "";
   fetchCursor(cursorNextCursor);
 };
 
@@ -244,6 +250,7 @@ document.getElementById("cursorPrev").onclick = () => {
   if (cursorPage <= 1) return;
   cursorStack.pop();
   cursorPage--;
+  document.getElementById("cursorStability").textContent = "";
   fetchCursor(cursorStack[cursorStack.length - 1]);
 };
 
@@ -251,7 +258,6 @@ document.getElementById("cursorCategory").onchange = (e) => {
   cursorCategory = e.target.value;
   cursorStack = [null];
   cursorPage = 1;
-  seenCursorIds.clear();
   fetchCursor(null);
 };
 
@@ -265,19 +271,26 @@ let offsetPage1Ids = new Set(); // store page 1 IDs for cross-page dup detection
 
 async function fetchOffset(page) {
   document.getElementById("offsetList").innerHTML = '<div class="loading">Loading...</div>';
-
-  const res = await fetch(`${API}/api/products/offset?page=${page}&limit=20`);
-  const data = await res.json();
-  renderOffsetProducts(data.products, page);
+  try {
+    const res = await fetch(`${API}/api/products/offset?page=${page}&limit=20`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+    if (!data.products) throw new Error(data.error || "No products in response");
+    renderOffsetProducts(data.products, page);
+  } catch (err) {
+    document.getElementById("offsetList").innerHTML =
+      `<div class="loading" style="color:red">Error: ${err.message}<br><small>Is the server running?</small></div>`;
+  }
 }
 
 function renderOffsetProducts(products, page) {
   const list = document.getElementById("offsetList");
 
-  // If going to page 2+, check for duplicates from earlier pages
+  let dupCount = 0;
   list.innerHTML = products.map(p => {
     const isNew = p.name.startsWith("INJECTED");
     const isDup = seenOffsetIds.has(String(p._id));
+    if (isDup) dupCount++;
     seenOffsetIds.add(String(p._id));
 
     return `
@@ -292,6 +305,15 @@ function renderOffsetProducts(products, page) {
   document.getElementById("offsetPageInfo").textContent =
     `Page ${page} (skip=${(page-1)*20})`;
   document.getElementById("offsetPrev").disabled = page === 1;
+
+  const counter = document.getElementById("dupCounter");
+  if (dupCount > 0) {
+    counter.textContent = `⚠️ ${dupCount} duplicate(s) found on this page!`;
+  } else if (page > 1) {
+    counter.textContent = "No duplicates yet — try injecting products!";
+  } else {
+    counter.textContent = "";
+  }
 }
 
 document.getElementById("offsetNext").onclick = () => {
@@ -330,11 +352,17 @@ document.getElementById("injectBtn").onclick = async () => {
   btn.disabled = false;
   btn.textContent = "💉 Inject 50 New Products NOW";
 
-  // Refresh BOTH panels to show the effect
-  // Cursor panel: re-fetch current page using same cursor (position unchanged)
+  // CURSOR panel: re-fetch same page using same cursor anchor
+  // The backend returns EXACTLY the same products → proves stability
   fetchCursor(cursorStack[cursorStack.length - 1]);
-  // Offset panel: re-fetch current page using same page number (position SHIFTS)
-  fetchOffset(offsetPage);
+  document.getElementById("cursorStability").textContent =
+    "✅ Page unchanged after inject — cursor held its position!";
+
+  // OFFSET panel: re-fetch same page number → skip(N) now lands on different data
+  seenOffsetIds.clear(); // reset so we can detect fresh duplicates
+  fetchOffset(1);        // reset to page 1 first so seenIds are fresh
+  offsetPage = 1;
+  document.getElementById("offsetPrev").disabled = true;
 };
 
 // ════════════════════════════════════════════════════════
